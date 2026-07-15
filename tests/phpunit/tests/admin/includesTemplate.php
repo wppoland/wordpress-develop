@@ -510,4 +510,23 @@ class Tests_Admin_IncludesTemplate extends WP_UnitTestCase {
 		$result = get_post_states( null );
 		$this->assertSame( array(), $result, 'get_post_states() should return an empty array when WP_Post is not supplied.' );
 	}
+
+	/**
+	 * @ticket 64892
+	 *
+	 * @covers ::get_submit_button
+	 */
+	public function test_get_submit_button() {
+		$default = get_submit_button();
+		$this->assertStringContainsString( 'class="button button-primary button-large"', $default, 'Default button classes should be primary and large.' );
+
+		$compact = get_submit_button( 'Compact Button', 'compact' );
+		$this->assertStringContainsString( 'class="button button-compact"', $compact, 'Compact shorthand should produce button-compact class.' );
+
+		$primary_compact = get_submit_button( 'Primary Compact', 'primary compact' );
+		$this->assertStringContainsString( 'class="button button-primary button-compact"', $primary_compact, 'Primary and compact shorthands should produce primary and compact classes.' );
+
+		$custom_class = get_submit_button( 'Custom Class', 'secondary custom-class' );
+		$this->assertStringContainsString( 'class="button custom-class"', $custom_class, 'Custom class should be preserved, secondary should be ignored.' );
+	}
 }
