@@ -3910,7 +3910,7 @@ function send_confirmation_on_profile_email( $user_id = 0 ) {
 		return false;
 	}
 
-	if ( $current_user->user_email !== $_POST['email'] ) {
+	if ( 0 !== strcasecmp( $current_user->user_email, $_POST['email'] ) ) {
 		if ( ! is_email( $_POST['email'] ) ) {
 			$errors->add(
 				'user_email',
@@ -4000,6 +4000,11 @@ All at ###SITENAME###
 		wp_mail( $_POST['email'], sprintf( __( '[%s] Email Change Request' ), $sitename ), $content );
 
 		$_POST['email'] = $current_user->user_email;
+	} else {
+		$new_email = get_user_meta( $current_user->ID, '_new_email', true );
+		if ( $new_email && 0 === strcasecmp( $new_email['newemail'], $_POST['email'] ) ) {
+			delete_user_meta( $current_user->ID, '_new_email' );
+		}
 	}
 }
 
@@ -4017,7 +4022,7 @@ function new_user_email_admin_notice() {
 
 	if ( 'profile.php' === $pagenow && isset( $_GET['updated'] ) ) {
 		$email = get_user_meta( get_current_user_id(), '_new_email', true );
-		if ( $email ) {
+		if ( $email && 0 !== strcasecmp( $email['newemail'], wp_get_current_user()->user_email ) ) {
 			$message = sprintf(
 				/* translators: %s: New email address. */
 				__( 'Your email address has not been updated yet. Please check your inbox at %s for a confirmation email.' ),

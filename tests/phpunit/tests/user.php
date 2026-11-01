@@ -2982,4 +2982,74 @@ class Tests_User extends WP_UnitTestCase {
 		$user = get_userdata( $user_id );
 		$this->assertSame( 'key', $user->user_activation_key, 'user_activation_key should not be cleared on case-only email change.' );
 	}
+
+	/**
+	 * Changing only the case of an email on profile should not trigger confirmation email
+	 * and should not revert $_POST['email'].
+	 *
+	 * @ticket 52976
+	 * @covers ::send_confirmation_on_profile_email
+	 */
+	public function test_case_only_email_change_on_profile_does_not_send_confirmation_email() {
+		reset_phpmailer_instance();
+
+		$user = self::factory()->user->create_and_get(
+			array(
+				'user_email' => 'before@example.com',
+			)
+		);
+
+		$_POST['email']   = 'Before@Example.COM';
+		$_POST['user_id'] = $user->ID;
+
+		wp_set_current_user( $user->ID );
+
+		do_action( 'personal_options_update', $user->ID );
+
+		// Confirmation email should NOT be sent.
+		$this->assertEmpty( $GLOBALS['phpmailer']->mock_sent, 'Confirmation email should not be sent for case-only email change.' );
+
+		// _new_email user_meta should NOT be created.
+		$new_email_meta = get_user_meta( $user->ID, '_new_email', true );
+		$this->assertEmpty( $new_email_meta, '_new_email meta should not be set for case-only email change.' );
+
+		// $_POST['email'] should retain the new casing so that edit_user() can save it.
+		$this->assertSame( 'Before@Example.COM', $_POST['email'], '$_POST["email"] should retain the submitted casing.' );
+	}
+
+	/**
+	 * A case-only email change on the profile screen should save the new casing.
+	 *
+	 * @ticket 52976
+	 * @covers ::send_confirmation_on_profile_email
+	 * @covers ::edit_user
+	 */
+	public function test_case_only_email_change_on_profile_saves_new_casing() {
+		require_once ABSPATH . 'wp-admin/includes/user.php';
+
+		reset_phpmailer_instance();
+
+		$user = self::factory()->user->create_and_get(
+			array(
+				'user_email' => 'profilecase@example.com',
+			)
+		);
+
+		$_POST['email']    = 'ProfileCase@Example.COM';
+		$_POST['nickname'] = $user->nickname;
+		$_POST['user_id']  = $user->ID;
+
+		wp_set_current_user( $user->ID );
+
+		// Mimic the profile update flow in wp-admin/user-edit.php.
+		do_action( 'personal_options_update', $user->ID );
+		$errors = edit_user( $user->ID );
+
+		$this->assertNotWPError( $errors, 'Profile update should not return WP_Error for case-only email change.' );
+
+		$updated_user = get_userdata( $user->ID );
+		$this->assertSame( 'ProfileCase@Example.COM', $updated_user->user_email, 'User email should be saved with the new casing.' );
+		$this->assertEmpty( $GLOBALS['phpmailer']->mock_sent, 'No confirmation or change notification emails should be sent.' );
+		$this->assertEmpty( get_user_meta( $user->ID, '_new_email', true ), 'No pending email change meta should remain.' );
+	}
 }
