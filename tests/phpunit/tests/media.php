@@ -76,6 +76,10 @@ CAP;
 		self::$original_wp_styles = $wp_styles;
 		$wp_styles                = null;
 		parent::set_up();
+
+		$this->reset_content_media_count();
+		$this->reset_omit_loading_attr_filter();
+		$this->reset_high_priority_element_flag();
 	}
 
 	public static function wpTearDownAfterClass() {
@@ -269,7 +273,7 @@ CAP;
 			)
 		);
 		$this->assertSame( 1, substr_count( $result, 'wp-caption &amp;myAlignment' ) );
-		$this->assertSame( 1, preg_match( '/id="myId(?:[0-9]+)?"/', $result ) );
+		$this->assertSame( 1, preg_match( '/id="myId(?:-[0-9]+)?"/', $result ) );
 		$this->assertSame( 1, substr_count( $result, self::CAPTION ) );
 	}
 
@@ -623,7 +627,7 @@ https://w.org</a>',
 		$this->assertSame( '', $prepped['type'] );
 		$this->assertSame( '', $prepped['subtype'] );
 		// #21963, there will be a GUID always, so there will be a URL.
-		$this->assertNotEquals( '', $prepped['url'] );
+		$this->assertNotSame( '', $prepped['url'] );
 		$this->assertSame( site_url( 'wp-includes/images/media/default.svg' ), $prepped['icon'] );
 
 		// Fake a mime.
@@ -956,7 +960,7 @@ https://w.org</a>',
 	 * @param mixed $filesize The `filesize` value stored in the attachment metadata.
 	 */
 	public function test_wp_prepare_attachment_for_js_filesize_falls_back_to_the_file( $filesize ) {
-		$id = self::factory()->attachment->create_upload_object( DIR_TESTDATA . '/images/canola.jpg' );
+		$id = self::$large_id;
 		$this->assertIsInt( $id );
 		$post = get_post( $id );
 		$this->assertInstanceOf( WP_Post::class, $post );
@@ -1530,11 +1534,23 @@ VIDEO;
 
 		$h = ceil( ( $height * $width ) / $width );
 
+		// wp_video_shortcode() numbers every call in the process, so record this call's number.
+		$instance = 0;
+		add_filter(
+			'wp_video_shortcode_override',
+			static function ( $html, $attr, $content, $id ) use ( &$instance ) {
+				$instance = $id;
+				return $html;
+			},
+			10,
+			4
+		);
+
 		$content = apply_filters( 'the_content', $video );
 
 		$expected = '<div style="width: ' . $width . 'px;" class="wp-video">' .
-			'<video class="wp-video-shortcode" id="video-' . $post_id . '-1" width="' . $width . '" height="' . $h . '" preload="metadata" controls="controls">' .
-			'<source type="video/mp4" src="http://domain.tld/wp-content/uploads/2013/12/xyz.mp4?_=1" />' .
+			'<video class="wp-video-shortcode" id="video-' . $post_id . '-' . $instance . '" width="' . $width . '" height="' . $h . '" preload="metadata" controls="controls">' .
+			'<source type="video/mp4" src="http://domain.tld/wp-content/uploads/2013/12/xyz.mp4?_=' . $instance . '" />' .
 			'<!-- WebM/VP8 for Firefox4, Opera, and Chrome --><source type="video/webm" src="myvideo.webm" />' .
 			'<!-- Ogg/Vorbis for older Firefox and Opera versions --><source type="video/ogg" src="myvideo.ogv" />' .
 			'<!-- Optional: Add subtitles for each language --><track kind="subtitles" src="subtitles.srt" srclang="en" />' .
@@ -1726,6 +1742,71 @@ VIDEO;
 
 		// Clean up.
 		remove_image_size( 'test-size' );
+	}
+
+	/**
+	 * @ticket 65751
+	 */
+	public function test_wp_get_registered_image_subsizes_includes_custom_size() {
+		add_image_size( 'test-size', 200, 600 );
+
+		$sizes = wp_get_registered_image_subsizes();
+
+		// Clean up.
+		remove_image_size( 'test-size' );
+
+		$this->assertArrayHasKey( 'test-size', $sizes );
+		$this->assertSame( 200, $sizes['test-size']['width'] );
+		$this->assertSame( 600, $sizes['test-size']['height'] );
+		$this->assertFalse( $sizes['test-size']['crop'] );
+	}
+
+	/**
+	 * @ticket 65751
+	 */
+	public function test_wp_get_registered_image_subsizes_preserves_crop_position() {
+		add_image_size( 'test-size', 200, 600, array( 'center', 'top' ) );
+
+		$sizes = wp_get_registered_image_subsizes();
+
+		// Clean up.
+		remove_image_size( 'test-size' );
+
+		$this->assertSame( array( 'center', 'top' ), $sizes['test-size']['crop'] );
+	}
+
+	/**
+	 * @ticket 65751
+	 */
+	public function test_wp_get_registered_image_subsizes_omits_size_with_no_dimensions() {
+		add_image_size( 'test-size', 0, 0 );
+
+		$sizes = wp_get_registered_image_subsizes();
+
+		// Clean up.
+		remove_image_size( 'test-size' );
+
+		$this->assertArrayNotHasKey( 'test-size', $sizes );
+	}
+
+	/**
+	 * @ticket 65751
+	 */
+	public function test_wp_get_registered_image_subsizes_honors_intermediate_image_sizes_filter() {
+		add_image_size( 'test-size', 200, 600 );
+
+		$exclude_test_size = static function ( $sizes ) {
+			return array_diff( $sizes, array( 'test-size' ) );
+		};
+		add_filter( 'intermediate_image_sizes', $exclude_test_size );
+
+		$sizes = wp_get_registered_image_subsizes();
+
+		// Clean up.
+		remove_filter( 'intermediate_image_sizes', $exclude_test_size );
+		remove_image_size( 'test-size' );
+
+		$this->assertArrayNotHasKey( 'test-size', $sizes );
 	}
 
 	/**
@@ -4721,7 +4802,7 @@ EOF;
 		$_wp_current_template_content = '<!-- wp:post-content /-->';
 
 		$html = get_the_block_template_html();
-		$this->assertSame( '<div class="wp-site-blocks"><div class="entry-content wp-block-post-content is-layout-flow wp-block-post-content-is-layout-flow">' . $expected_content . '</div></div>', $html );
+		$this->assertEqualHTML( '<div class="wp-site-blocks"><div class="entry-content wp-block-post-content is-layout-flow wp-block-post-content-is-layout-flow">' . $expected_content . '</div></div>', $html );
 	}
 
 	/**
@@ -4791,7 +4872,7 @@ EOF;
 		$_wp_current_template_content = '<!-- wp:post-featured-image /--> <!-- wp:post-content /-->';
 
 		$html = get_the_block_template_html();
-		$this->assertSame( '<div class="wp-site-blocks">' . $expected_featured_image . ' <div class="entry-content wp-block-post-content is-layout-flow wp-block-post-content-is-layout-flow">' . $expected_content . '</div></div>', $html );
+		$this->assertEqualHTML( '<div class="wp-site-blocks">' . $expected_featured_image . ' <div class="entry-content wp-block-post-content is-layout-flow wp-block-post-content-is-layout-flow">' . $expected_content . '</div></div>', $html );
 	}
 
 	/**
@@ -4850,7 +4931,7 @@ EOF;
 		$expected_template_content .= '<footer class="wp-block-template-part">' . wp_img_tag_add_loading_optimization_attrs( $footer_img, 'force-lazy' ) . '</footer>';
 
 		$html = get_the_block_template_html();
-		$this->assertSame( '<div class="wp-site-blocks">' . $expected_template_content . '</div>', $html );
+		$this->assertEqualHTML( '<div class="wp-site-blocks">' . $expected_template_content . '</div>', $html );
 	}
 
 	/**
@@ -5963,7 +6044,7 @@ EOF;
 		// Cleanup.
 		remove_shortcode( 'full_image' );
 
-		$this->assertSame( $expected_content, $content );
+		$this->assertEqualHTML( $expected_content, $content );
 	}
 
 	/**
@@ -6117,7 +6198,7 @@ EOF;
 		remove_shortcode( 'full_image' );
 		unregister_block_type( 'core/full-image-shortcode' );
 
-		$this->assertSame( $expected_content, $content );
+		$this->assertEqualHTML( $expected_content, $content );
 	}
 
 	private function reset_content_media_count() {
